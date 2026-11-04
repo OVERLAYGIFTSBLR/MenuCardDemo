@@ -10,7 +10,8 @@
 <link rel="preconnect" href="https://unpkg.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 
-<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+<!-- FIX: pinned version so updates on unpkg can't break the page -->
+<script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 
 <style>
 :root{
@@ -146,6 +147,7 @@ color:var(--gold2);
 z-index:10;
 opacity:0;
 white-space:nowrap;
+pointer-events:none;
 }
 .model-wrap.model-active .pinch-hint{
 opacity:1;
@@ -167,6 +169,7 @@ opacity:0;
 transform:translateY(-8px);
 transition:.4s;
 z-index:8;
+pointer-events:none;
 }
 .ar-badge.visible{
 opacity:1;
@@ -244,6 +247,7 @@ text-transform:uppercase;
 min-height:46px;
 cursor:pointer;
 }
+.action-btn:disabled{opacity:.5;cursor:not-allowed}
 .view3d-btn{
 background:rgba(184,151,58,.14);
 color:var(--gold2);
@@ -257,6 +261,10 @@ flex:1;
 background:linear-gradient(135deg,var(--gold),var(--gold2));
 color:#000;
 }
+.ar-btn.armed{
+animation:pulse 1s ease-in-out infinite;
+}
+@keyframes pulse{50%{transform:scale(1.03)}}
 
 .scroll-dots{
 display:flex;
@@ -296,6 +304,8 @@ const landmarks=[
 {name:'Kimono Dress',city:'Japan',folder:'dress',file:'dress',hasUsdz:true}
 ];
 
+const AR_LABEL='🪐 View in Real World';
+
 const grid=document.getElementById('grid');
 const dotsEl=document.getElementById('dots');
 
@@ -304,13 +314,15 @@ const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent)||
 
 landmarks.forEach((l,i)=>{
 const base=`ExploreJapan/${l.folder}/${l.file}`;
-const glbPath=`${base}.glb`;
-const usdzPath=`${base}.usdz`;
-const pngPath=`${base}.png`;
+// FIX: encodeURI so folder/file names with spaces become %20 (works for glb, usdz, png)
+const glbPath=encodeURI(`${base}.glb`);
+const usdzPath=encodeURI(`${base}.usdz`);
+const pngPath=encodeURI(`${base}.png`);
 
 const card=document.createElement('div');
 card.className='landmark-card';
 
+// FIX: removed reveal="interaction" (it kept the 3D model hidden)
 card.innerHTML=`
 <div class="model-wrap" id="wrap-${i}">
 
@@ -323,11 +335,9 @@ ${isIOS&&l.hasUsdz?`ios-src="${usdzPath}"`:''}
 ar
 ar-modes="${isIOS?'quick-look webxr':'scene-viewer webxr'}"
 ar-placement="floor"
-
 ar-scale="auto"
 
 loading="${i===0?'eager':'lazy'}"
-reveal="interaction"
 environment-image="neutral"
 shadow-intensity="1.2"
 shadow-softness="0.8"
@@ -358,7 +368,7 @@ interaction-prompt="none">
 <div class="landmark-city">${l.city}</div>
 <div class="btn-row">
 <button class="action-btn view3d-btn" id="v3dbtn-${i}" onclick="toggle3D(${i})">⬡ 3D</button>
-<button class="action-btn ar-btn" id="arbtn-${i}" onclick="launchAR(${i})">🪐 View in Real World</button>
+<button class="action-btn ar-btn" id="arbtn-${i}" onclick="launchAR(${i})">${AR_LABEL}</button>
 </div>
 </div>`;
 
@@ -382,7 +392,7 @@ const arbtn=document.getElementById(`arbtn-${i}`);
 const v3dbtn=document.getElementById(`v3dbtn-${i}`);
 const wrap=document.getElementById(`wrap-${i}`);
 
-state[i]={mv,arload,bar,lbl,badge,arbtn,v3dbtn,wrap,ready:false,loading:false,showing3D:false};
+state[i]={mv,arload,bar,lbl,badge,arbtn,v3dbtn,wrap,ready:false,loading:false,showing3D:false,pending3D:false,arArmed:false};
 
 mv.addEventListener('progress',(e)=>{
 const pct=Math.round(e.detail.totalProgress*100);
@@ -397,17 +407,43 @@ s.loading=false;
 arload.classList.remove('show');
 badge.classList.add('visible');
 if(s.pending3D){s.pending3D=false;activate3DView(i)}
-if(s.pendingAR){s.pendingAR=false;mv.activateAR()}
+// FIX: AR can only start from a real tap. Model just finished loading,
+// so ask the user to tap again instead of calling activateAR() here.
+if(s.pendingAR){
+s.pendingAR=false;
+s.arArmed=true;
+arbtn.innerHTML='✦ Tap to open AR';
+arbtn.classList.add('armed');
+}
 });
 
-mv.addEventListener('error',()=>{
+mv.addEventListener('error',(e)=>{
+console.error('Model failed to load:',mv.src,e.detail||e);
+const s=state[i];
+s.loading=false;
+s.pending3D=false;
+s.pendingAR=false;
 arload.classList.remove('show');
 arbtn.disabled=true;
 v3dbtn.disabled=true;
 arbtn.innerHTML='Unavailable';
 });
+
+// Reset the AR button once AR session ends or fails
+mv.addEventListener('ar-status',(e)=>{
+if(e.detail.status==='failed'){
+console.warn('AR failed for',mv.src);
+}
 });
 });
+});
+
+function resetARButton(i){
+const s=state[i];
+s.arArmed=false;
+s.arbtn.classList.remove('armed');
+s.arbtn.innerHTML=AR_LABEL;
+}
 
 function activate3DView(i){
 const s=state[i];
@@ -431,6 +467,14 @@ function stopScrollPropagation(e){
 e.stopPropagation();
 }
 
+function startLoading(i){
+const s=state[i];
+s.loading=true;
+s.mv.loading='eager';
+s.mv.setAttribute('loading','eager');
+s.arload.classList.add('show');
+}
+
 function toggle3D(i){
 const s=state[i];
 if(s.showing3D){
@@ -440,10 +484,8 @@ return;
 if(s.ready){
 activate3DView(i);
 }else if(!s.loading){
-s.loading=true;
 s.pending3D=true;
-s.mv.setAttribute('loading','eager');
-s.arload.classList.add('show');
+startLoading(i);
 }else{
 s.pending3D=true;
 }
@@ -452,12 +494,20 @@ s.pending3D=true;
 function launchAR(i){
 const s=state[i];
 if(s.ready){
+// Called directly from the user's tap -> allowed by iOS / Android
+try{
+if(s.mv.canActivateAR===false){
+alert('AR is not supported on this device or browser. On iPhone use Safari; on Android use Chrome with Google Play Services for AR.');
+}else{
 s.mv.activateAR();
+}
+}catch(err){
+console.error(err);
+}
+resetARButton(i);
 }else if(!s.loading){
-s.loading=true;
 s.pendingAR=true;
-s.mv.setAttribute('loading','eager');
-s.arload.classList.add('show');
+startLoading(i);
 }else{
 s.pendingAR=true;
 }
