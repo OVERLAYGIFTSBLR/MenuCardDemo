@@ -10,7 +10,6 @@
 <link rel="preconnect" href="https://unpkg.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 
-<!-- FIX: pinned version so updates on unpkg can't break the page -->
 <script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
 
 <style>
@@ -96,6 +95,7 @@ scroll-snap-align:center;
 flex:1;
 position:relative;
 overflow:hidden;
+min-height:0;
 background:radial-gradient(circle at center,#1b160c 0%,#080604 100%);
 }
 
@@ -184,10 +184,14 @@ align-items:center;
 justify-content:center;
 flex-direction:column;
 gap:12px;
-background:rgba(8,6,4,.85);
+padding:20px;
+text-align:center;
+background:rgba(8,6,4,.88);
 z-index:20;
 }
 .ar-loading.show{display:flex}
+.ar-loading.err .loader-ring,
+.ar-loading.err .loader-bar-track{display:none}
 
 .loader-ring{
 width:42px;
@@ -213,8 +217,9 @@ background:var(--gold2);
 }
 .loader-label{
 font-size:10px;
-letter-spacing:.18em;
+letter-spacing:.14em;
 text-transform:uppercase;
+line-height:1.6;
 }
 
 .landmark-info{
@@ -280,6 +285,61 @@ background:rgba(184,151,58,.25)
 background:var(--gold2);
 transform:scale(1.35)
 }
+
+/* ---------- Diagnostics ---------- */
+.diag-fab{
+position:fixed;
+right:14px;
+bottom:max(env(safe-area-inset-bottom),12px);
+z-index:150;
+border:1px solid rgba(184,151,58,.4);
+background:rgba(8,6,4,.85);
+color:var(--gold2);
+border-radius:30px;
+padding:9px 14px;
+font-size:10px;
+letter-spacing:.1em;
+cursor:pointer;
+}
+.diag-panel{
+position:fixed;
+left:0;right:0;bottom:0;
+max-height:70vh;
+z-index:200;
+display:none;
+flex-direction:column;
+background:#0f0c09;
+border-top:1px solid var(--gold);
+border-radius:16px 16px 0 0;
+}
+.diag-panel.show{display:flex}
+.diag-head{
+display:flex;
+justify-content:space-between;
+align-items:center;
+padding:12px 16px;
+border-bottom:1px solid rgba(184,151,58,.25);
+font-size:12px;
+color:var(--gold2);
+}
+.diag-head button{
+background:none;
+border:1px solid rgba(184,151,58,.4);
+color:var(--gold2);
+border-radius:8px;
+padding:6px 10px;
+font-size:11px;
+margin-left:6px;
+}
+.diag-body{
+padding:14px 16px max(env(safe-area-inset-bottom),16px);
+overflow:auto;
+font-family:ui-monospace,Menlo,monospace;
+font-size:11px;
+line-height:1.65;
+white-space:pre-wrap;
+word-break:break-all;
+}
 </style>
 </head>
 <body>
@@ -294,6 +354,18 @@ transform:scale(1.35)
 <div class="explorer-grid" id="grid"></div>
 <div class="scroll-dots" id="dots"></div>
 
+<button class="diag-fab" onclick="runDiagnostics()">🛠 Check</button>
+<div class="diag-panel" id="diagPanel">
+<div class="diag-head">
+<span>Diagnostics</span>
+<span>
+<button onclick="copyDiag()">Copy</button>
+<button onclick="document.getElementById('diagPanel').classList.remove('show')">Close</button>
+</span>
+</div>
+<div class="diag-body" id="diagBody"></div>
+</div>
+
 <script>
 const landmarks=[
 {name:'Tokyo Skytree',city:'Tokyo',folder:'tokyoskytree',file:'tokyoskytree',hasUsdz:true},
@@ -305,47 +377,50 @@ const landmarks=[
 ];
 
 const AR_LABEL='🪐 View in Real World';
+const UA=navigator.userAgent;
+const isIOS=/iPhone|iPad|iPod/i.test(UA)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+const isAndroid=/Android/i.test(UA);
 
 const grid=document.getElementById('grid');
 const dotsEl=document.getElementById('dots');
 
-const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent)||
-(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+// Build absolute, URL-encoded paths (handles spaces in folder / file names)
+function paths(l){
+const base=`ExploreJapan/${l.folder}/${l.file}`;
+return{
+glb:encodeURI(`${base}.glb`),
+usdz:encodeURI(`${base}.usdz`),
+png:encodeURI(`${base}.png`)
+};
+}
+function abs(u){return new URL(u,location.href).href}
 
 landmarks.forEach((l,i)=>{
-const base=`ExploreJapan/${l.folder}/${l.file}`;
-// FIX: encodeURI so folder/file names with spaces become %20 (works for glb, usdz, png)
-const glbPath=encodeURI(`${base}.glb`);
-const usdzPath=encodeURI(`${base}.usdz`);
-const pngPath=encodeURI(`${base}.png`);
+const p=paths(l);
 
 const card=document.createElement('div');
 card.className='landmark-card';
 
-// FIX: removed reveal="interaction" (it kept the 3D model hidden)
 card.innerHTML=`
 <div class="model-wrap" id="wrap-${i}">
 
-<img class="model-poster" src="${pngPath}" alt="${l.name}">
+<img class="model-poster" src="${p.png}" alt="${l.name}">
 
 <model-viewer
 id="mv-${i}"
-src="${glbPath}"
-${isIOS&&l.hasUsdz?`ios-src="${usdzPath}"`:''}
+src="${p.glb}"
+${isIOS&&l.hasUsdz?`ios-src="${p.usdz}"`:''}
 ar
 ar-modes="${isIOS?'quick-look webxr':'scene-viewer webxr'}"
 ar-placement="floor"
 ar-scale="auto"
-
 loading="${i===0?'eager':'lazy'}"
 environment-image="neutral"
 shadow-intensity="1.2"
 shadow-softness="0.8"
 exposure="1.1"
-
 camera-controls
 touch-action="pan-y"
-
 min-camera-orbit="auto auto 8%"
 max-camera-orbit="auto auto 900%"
 field-of-view="18deg"
@@ -381,66 +456,67 @@ dotsEl.appendChild(dot);
 
 const state={};
 
-requestAnimationFrame(()=>{
 landmarks.forEach((l,i)=>{
-const mv=document.getElementById(`mv-${i}`);
-const arload=document.getElementById(`arload-${i}`);
-const bar=document.getElementById(`bar-${i}`);
-const lbl=document.getElementById(`lbl-${i}`);
-const badge=document.getElementById(`badge-${i}`);
-const arbtn=document.getElementById(`arbtn-${i}`);
-const v3dbtn=document.getElementById(`v3dbtn-${i}`);
-const wrap=document.getElementById(`wrap-${i}`);
+const s={
+mv:document.getElementById(`mv-${i}`),
+arload:document.getElementById(`arload-${i}`),
+bar:document.getElementById(`bar-${i}`),
+lbl:document.getElementById(`lbl-${i}`),
+badge:document.getElementById(`badge-${i}`),
+arbtn:document.getElementById(`arbtn-${i}`),
+v3dbtn:document.getElementById(`v3dbtn-${i}`),
+wrap:document.getElementById(`wrap-${i}`),
+ready:false,loading:false,showing3D:false,pending3D:false,pendingAR:false,timer:null,error:null
+};
+state[i]=s;
 
-state[i]={mv,arload,bar,lbl,badge,arbtn,v3dbtn,wrap,ready:false,loading:false,showing3D:false,pending3D:false,arArmed:false};
-
-mv.addEventListener('progress',(e)=>{
-const pct=Math.round(e.detail.totalProgress*100);
-bar.style.width=pct+'%';
-lbl.textContent=`Loading ${pct}%`;
+// tap the overlay to dismiss it
+s.arload.addEventListener('click',()=>{
+s.arload.classList.remove('show','err');
+s.pending3D=false;
+s.pendingAR=false;
 });
 
-mv.addEventListener('load',()=>{
-const s=state[i];
+s.mv.addEventListener('progress',(e)=>{
+const pct=Math.round(e.detail.totalProgress*100);
+s.bar.style.width=pct+'%';
+s.lbl.textContent=`Loading ${pct}%`;
+});
+
+s.mv.addEventListener('load',()=>{
+clearTimeout(s.timer);
 s.ready=true;
 s.loading=false;
-arload.classList.remove('show');
-badge.classList.add('visible');
+s.arload.classList.remove('show','err');
+s.badge.classList.add('visible');
 if(s.pending3D){s.pending3D=false;activate3DView(i)}
-// FIX: AR can only start from a real tap. Model just finished loading,
-// so ask the user to tap again instead of calling activateAR() here.
 if(s.pendingAR){
 s.pendingAR=false;
-s.arArmed=true;
-arbtn.innerHTML='✦ Tap to open AR';
-arbtn.classList.add('armed');
+s.arbtn.innerHTML='✦ Tap to open AR';
+s.arbtn.classList.add('armed');
 }
 });
 
-mv.addEventListener('error',(e)=>{
-console.error('Model failed to load:',mv.src,e.detail||e);
-const s=state[i];
+s.mv.addEventListener('error',(e)=>{
+clearTimeout(s.timer);
+const d=e.detail||{};
+s.error=(d.sourceError&&d.sourceError.message)||d.type||'unknown error';
+console.error('Model failed to load:',s.mv.src,e.detail||e);
 s.loading=false;
 s.pending3D=false;
 s.pendingAR=false;
-arload.classList.remove('show');
-arbtn.disabled=true;
-v3dbtn.disabled=true;
-arbtn.innerHTML='Unavailable';
+s.arload.classList.add('show','err');
+s.lbl.textContent='Could not load model file. Tap 🛠 Check for details.';
+s.v3dbtn.disabled=true;
 });
 
-// Reset the AR button once AR session ends or fails
-mv.addEventListener('ar-status',(e)=>{
-if(e.detail.status==='failed'){
-console.warn('AR failed for',mv.src);
-}
-});
+s.mv.addEventListener('ar-status',(e)=>{
+if(e.detail.status==='failed')console.warn('AR failed for',s.mv.src);
 });
 });
 
 function resetARButton(i){
 const s=state[i];
-s.arArmed=false;
 s.arbtn.classList.remove('armed');
 s.arbtn.innerHTML=AR_LABEL;
 }
@@ -451,7 +527,6 @@ s.showing3D=true;
 s.wrap.classList.add('model-active');
 s.v3dbtn.classList.add('is-active');
 s.v3dbtn.innerHTML='✕ 2D';
-s.wrap.addEventListener('touchstart',stopScrollPropagation,{passive:false});
 }
 
 function deactivate3DView(i){
@@ -460,59 +535,173 @@ s.showing3D=false;
 s.wrap.classList.remove('model-active');
 s.v3dbtn.classList.remove('is-active');
 s.v3dbtn.innerHTML='⬡ 3D';
-s.wrap.removeEventListener('touchstart',stopScrollPropagation);
-}
-
-function stopScrollPropagation(e){
-e.stopPropagation();
 }
 
 function startLoading(i){
 const s=state[i];
+if(!customElements.get('model-viewer')){
+s.arload.classList.add('show','err');
+s.lbl.textContent='3D viewer library did not load (internet blocked?). Tap 🛠 Check.';
+return;
+}
 s.loading=true;
-s.mv.loading='eager';
 s.mv.setAttribute('loading','eager');
+s.arload.classList.remove('err');
 s.arload.classList.add('show');
+s.lbl.textContent='Loading model...';
+clearTimeout(s.timer);
+s.timer=setTimeout(()=>{
+if(!s.ready&&!s.error){
+s.lbl.textContent='Still loading… file may be too large. Tap to close.';
+}
+},15000);
 }
 
 function toggle3D(i){
 const s=state[i];
-if(s.showing3D){
-deactivate3DView(i);
-return;
-}
-if(s.ready){
-activate3DView(i);
-}else if(!s.loading){
+if(s.showing3D){deactivate3DView(i);return}
+if(s.ready){activate3DView(i)}
+else{
 s.pending3D=true;
-startLoading(i);
-}else{
-s.pending3D=true;
+if(!s.loading)startLoading(i);
 }
+}
+
+// ---- Direct AR launchers (run straight from the user's tap, no waiting for the model) ----
+function openQuickLook(usdzUrl){
+const a=document.createElement('a');
+a.setAttribute('rel','ar');
+a.href=usdzUrl+'#allowsContentScaling=1';
+a.appendChild(document.createElement('img'));
+a.style.display='none';
+document.body.appendChild(a);
+a.click();
+setTimeout(()=>a.remove(),1000);
+}
+
+function openSceneViewer(glbUrl,title){
+const fallback=encodeURIComponent(location.href);
+const intent='intent://arvr.google.com/scene-viewer/1.0'
++'?file='+encodeURIComponent(glbUrl)
++'&mode=ar_preferred'
++'&title='+encodeURIComponent(title)
++'#Intent;scheme=https;package=com.google.android.googlequicksearchbox;'
++'action=android.intent.action.VIEW;S.browser_fallback_url='+fallback+';end;';
+window.location.href=intent;
 }
 
 function launchAR(i){
 const s=state[i];
-if(s.ready){
-// Called directly from the user's tap -> allowed by iOS / Android
-try{
-if(s.mv.canActivateAR===false){
-alert('AR is not supported on this device or browser. On iPhone use Safari; on Android use Chrome with Google Play Services for AR.');
-}else{
-s.mv.activateAR();
+const l=landmarks[i];
+const p=paths(l);
+
+if(location.protocol==='file:'){
+alert('This page is opened as a local file. AR needs the page to be hosted on an HTTPS website (GitHub Pages, Netlify, Vercel).');
+return;
 }
-}catch(err){
-console.error(err);
+
+// iPhone / iPad: Quick Look straight from the .usdz
+if(isIOS&&l.hasUsdz){
+openQuickLook(abs(p.usdz));
+return;
+}
+
+// Android: Scene Viewer straight from the .glb (must be HTTPS)
+if(isAndroid){
+if(location.protocol!=='https:'){
+alert('Android AR needs HTTPS. Open the hosted https:// version of this page.');
+return;
+}
+openSceneViewer(abs(p.glb),l.name);
+return;
+}
+
+// Everything else (iOS without a usdz, WebXR browsers): use model-viewer
+if(s.ready){
+if(s.mv.canActivateAR){
+s.mv.activateAR();
+}else{
+alert('AR is not available on this device/browser. Open this page on a phone: Safari on iPhone, Chrome on Android.');
 }
 resetARButton(i);
-}else if(!s.loading){
-s.pendingAR=true;
-startLoading(i);
 }else{
 s.pendingAR=true;
+if(!s.loading)startLoading(i);
 }
 }
 
+// ---------------- Diagnostics ----------------
+async function checkFile(url,kind){
+try{
+const r=await fetch(url,{cache:'no-store'});
+if(!r.ok)return `❌ ${kind}: HTTP ${r.status} ${r.statusText}  ← ${url}`;
+const reader=r.body.getReader();
+const {value}=await reader.read();
+reader.cancel();
+const head=new TextDecoder('latin1').decode(value.slice(0,60));
+const len=r.headers.get('content-length');
+const mb=len?(len/1048576).toFixed(1)+' MB':'size unknown';
+const ct=r.headers.get('content-type')||'no content-type';
+let verdict;
+if(kind==='GLB'){
+if(head.startsWith('glTF'))verdict='valid GLB';
+else if(head.startsWith('version https://git-lfs'))verdict='❌ Git LFS pointer, NOT the real model';
+else if(head.trim().startsWith('<'))verdict='❌ got an HTML page (wrong path / 404 page)';
+else verdict='❌ not a valid GLB file';
+}else{
+if(head.startsWith('PK'))verdict='valid USDZ';
+else if(head.startsWith('version https://git-lfs'))verdict='❌ Git LFS pointer, NOT the real model';
+else if(head.trim().startsWith('<'))verdict='❌ got an HTML page (wrong path / 404 page)';
+else verdict='❌ not a valid USDZ file';
+}
+const icon=verdict.startsWith('❌')?'❌':(len&&len>15728640?'⚠️':'✅');
+const big=(len&&len>15728640)?'  (large: may fail on phones)':'';
+return `${icon} ${kind}: ${verdict}, ${mb}, ${ct}${big}`;
+}catch(e){
+return `❌ ${kind}: fetch failed (${e.message}) ← ${url}`;
+}
+}
+
+let lastReport='';
+async function runDiagnostics(){
+const panel=document.getElementById('diagPanel');
+const body=document.getElementById('diagBody');
+panel.classList.add('show');
+body.textContent='Running checks…';
+const out=[];
+
+out.push(`Page: ${location.href}`);
+if(location.protocol==='file:')out.push('❌ Opened as a local file. Models cannot load and AR cannot start. Host it on HTTPS.');
+else if(location.protocol==='http:'&&!['localhost','127.0.0.1'].includes(location.hostname))out.push('❌ Plain HTTP. Android Scene Viewer needs HTTPS.');
+else out.push('✅ Protocol OK: '+location.protocol);
+out.push(`${window.isSecureContext?'✅':'❌'} Secure context: ${window.isSecureContext}`);
+out.push(`${customElements.get('model-viewer')?'✅':'❌'} model-viewer library loaded`);
+out.push(`Device: ${isIOS?'iOS':isAndroid?'Android':'Desktop / other'}`);
+out.push(`Browser: ${UA}`);
+out.push('');
+
+for(let i=0;i<landmarks.length;i++){
+const l=landmarks[i];
+const p=paths(l);
+out.push(`── ${l.name}`);
+out.push(await checkFile(p.glb,'GLB'));
+if(l.hasUsdz)out.push(await checkFile(p.usdz,'USDZ'));
+const s=state[i];
+if(s.error)out.push(`❌ model-viewer error: ${s.error}`);
+else if(s.ready)out.push(`✅ model loaded in viewer · canActivateAR: ${s.mv.canActivateAR}`);
+else out.push('… not loaded yet (tap 3D to load)');
+out.push('');
+}
+
+lastReport=out.join('\n');
+body.textContent=lastReport;
+}
+
+function copyDiag(){
+if(navigator.clipboard)navigator.clipboard.writeText(lastReport).catch(()=>{});
+}
+
+// dots
 const dots=dotsEl.querySelectorAll('.dot');
 grid.addEventListener('scroll',()=>{
 const center=grid.scrollLeft+grid.clientWidth/2;
