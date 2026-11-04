@@ -385,13 +385,20 @@ const grid=document.getElementById('grid');
 const dotsEl=document.getElementById('dots');
 
 // Build absolute, URL-encoded paths (handles spaces in folder / file names)
+// Assets are in the ExploreJapan folder shown in your screenshot.
+ // If this HTML itself is inside ExploreJapan, use its current folder instead.
+function assetRoot(){
+  const parts=location.pathname.split('/').filter(Boolean);
+  const isInsideExploreJapan=parts.some(p=>p.toLowerCase()==='explorejapan');
+  return isInsideExploreJapan ? './' : './ExploreJapan/';
+}
 function paths(l){
-const base=`ExploreJapan/${l.folder}/${l.file}`;
-return{
-glb:encodeURI(`${base}.glb`),
-usdz:encodeURI(`${base}.usdz`),
-png:encodeURI(`${base}.png`)
-};
+  const base=`${assetRoot()}${l.folder}/${l.file}`;
+  return {
+    glb:encodeURI(`${base}.glb`),
+    usdz:encodeURI(`${base}.usdz`),
+    png:encodeURI(`${base}.png`)
+  };
 }
 function abs(u){return new URL(u,location.href).href}
 
@@ -411,7 +418,7 @@ id="mv-${i}"
 src="${p.glb}"
 ${isIOS&&l.hasUsdz?`ios-src="${p.usdz}"`:''}
 ar
-ar-modes="${isIOS?'quick-look webxr':'scene-viewer webxr'}"
+ar-modes="quick-look scene-viewer webxr"
 ar-placement="floor"
 ar-scale="auto"
 loading="${i===0?'eager':'lazy'}"
@@ -568,15 +575,25 @@ if(!s.loading)startLoading(i);
 }
 
 // ---- Direct AR launchers (run straight from the user's tap, no waiting for the model) ----
-function openQuickLook(usdzUrl){
-const a=document.createElement('a');
-a.setAttribute('rel','ar');
-a.href=usdzUrl+'#allowsContentScaling=1';
-a.appendChild(document.createElement('img'));
-a.style.display='none';
-document.body.appendChild(a);
-a.click();
-setTimeout(()=>a.remove(),1000);
+function openQuickLook(usdzUrl, posterUrl){
+  // Safari Quick Look expects an <img> as the direct child of the rel="ar" link.
+  const a=document.createElement('a');
+  a.setAttribute('rel','ar');
+  a.href=usdzUrl+'#allowsContentScaling=1';
+  const img=document.createElement('img');
+  img.src=abs(posterUrl);
+  img.alt='View model in AR';
+  img.style.width='1px';
+  img.style.height='1px';
+  a.appendChild(img);
+  a.style.position='fixed';
+  a.style.left='0';
+  a.style.top='0';
+  a.style.opacity='0.01';
+  a.style.zIndex='9999';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>a.remove(),1500);
 }
 
 function openSceneViewer(glbUrl,title){
@@ -602,7 +619,7 @@ return;
 
 // iPhone / iPad: Quick Look straight from the .usdz
 if(isIOS&&l.hasUsdz){
-openQuickLook(abs(p.usdz));
+openQuickLook(p.usdz,p.png);
 return;
 }
 
@@ -616,7 +633,13 @@ openSceneViewer(abs(p.glb),l.name);
 return;
 }
 
-// Everything else (iOS without a usdz, WebXR browsers): use model-viewer
+// iPhone/iPad Quick Look requires a USDZ file. iOS Safari does not support WebXR AR.
+if(isIOS && !l.hasUsdz){
+  alert('AR on iPhone/iPad needs a USDZ file for this landmark. Please add '+l.file+'.usdz to its folder.');
+  return;
+}
+
+// Other supported WebXR browsers: use model-viewer
 if(s.ready){
 if(s.mv.canActivateAR){
 s.mv.activateAR();
